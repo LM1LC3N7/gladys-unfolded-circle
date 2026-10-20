@@ -414,20 +414,30 @@ export class RemoteApp {
    */
   async read(generation = this.generation) {
     const api = this.api;
-    if (!this.data.remote || this.identityAt === undefined) {
+    if (!this.data.remote) {
+      // No identity known yet: without it there is no device, any failure counts.
       await this.readIdentity(api, generation);
-    } else if (this.now() - this.identityAt >= this.timings.infoRefresh) {
+    } else if (
+      this.identityAt === undefined ||
+      this.now() - this.identityAt >= this.timings.infoRefresh
+    ) {
+      // A remote already known (/data): its identity is only a refresh, at a
+      // new client as every 6 h; a 5xx there never hides the activities.
       await this.readIdentity(api, generation).catch((err) => {
         if (
           err?.kind === KINDS.STALE ||
           SECONDARY_DECISIVE.has(err?.kind) ||
+          err?.kind === KINDS.TLS ||
           NO_ANSWER_KINDS.has(err?.kind)
         ) {
           throw err;
         }
-        // A 5xx or an odd answer of the identity refresh: kept as it was, tried in 6 h.
+        // A 5xx or an odd answer: the saved identity is kept, asked again in 6 h.
         this.identityAt = this.now();
-        this.logger.warn(`Could not read the identity of the remote: ${err.message}`);
+        if (this.identityError !== err?.message) {
+          this.identityError = err?.message;
+          this.logger.warn(`Could not read the identity of the remote: ${err?.message}`);
+        }
       });
     }
     // The activities first: a remote asleep costs one request per reading.
@@ -478,6 +488,7 @@ export class RemoteApp {
     this.alive(generation);
     const system = parseSystem(await api.system()) ?? {};
     this.alive(generation);
+    this.identityError = undefined;
     const stored = this.data.remote;
     const same =
       stored &&

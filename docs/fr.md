@@ -114,8 +114,12 @@ activités) : la batterie et le mode ne sont demandés que si elle a répondu.
   429), gardée après un redémarrage. Pendant la pause, rien n'est lu et
   « Démarrer » est refusé ; « Arrêter » part quand même (un seul essai). Un
   5xx de la liste des activités déclenche la pause ; un 5xx de la batterie,
-  du mode d'alimentation ou de l'identité laisse seulement ces valeurs de
-  côté, les activités restent suivies. Un 429 déclenche toujours la pause.
+  du mode d'alimentation ou de l'identité d'une télécommande déjà connue
+  (aussi au redémarrage, à une nouvelle clé ou à « Se reconnecter ») laisse
+  seulement ces valeurs de côté : l'identité enregistrée est gardée et
+  redemandée 6 heures plus tard, les activités restent suivies. Seule la
+  toute première lecture de l'identité, sans laquelle il n'y a pas
+  d'appareil, met en pause sur un 5xx. Un 429 déclenche toujours la pause.
 - **Certificat refusé** : une adresse en `https://` avec un certificat
   auto-signé est refusée ; le statut le dit et rien n'est envoyé. Saisissez
   l'adresse sans `https://` (l'API locale est en HTTP simple).

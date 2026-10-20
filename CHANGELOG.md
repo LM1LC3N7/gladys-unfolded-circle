@@ -40,9 +40,11 @@ the notes of the version's GitHub Release.
 - A new API key, a new address or "Reconnect" during a reading no longer
   leaves the integration without any reading: the new client reads at once,
   and nothing of the old reading is kept.
-- A 5xx of the battery, the power mode or the identity no longer pauses
-  everything: only those values are left out, the activities are still
-  followed. A 5xx of the activity list still pauses.
+- A 5xx of the battery, the power mode or the identity of a remote already
+  known (at a restart, a new key or "Reconnect" too) no longer pauses
+  everything: only those values are left out, the saved identity is kept and
+  asked again 6 hours later, the activities are still followed. A 5xx of the
+  activity list, or of the very first identity reading, still pauses.
 - The ack of a refused command no longer waits for the status publication nor
   for `/data`.
 - A 401/403 of one command no longer stops the integration: a reading checks

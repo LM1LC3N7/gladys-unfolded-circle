@@ -290,6 +290,37 @@ test('5xx of a secondary path: only its values left out, no pause', async (t) =>
   assert.equal(app.phase, 'paused');
 });
 
+test('a restart with a known remote whose /system answers 500: still connected, activities followed', async (t) => {
+  const store = new MemoryStore();
+  const clock = fakeClock();
+  const remote = fakeRemote();
+  const first = await created(t, { store, clock, remote });
+  await first.app.stop();
+  remote.statuses.set('system', 500);
+  remote.activities[0].attributes.state = 'ON';
+  const { gladys, app, logs } = await setup(t, { store, clock, remote });
+  gladys.fake.devices.push(first.device);
+  await gladys.fake.deviceCreated(first.device);
+  const before = remote.reads('activities');
+  await clock.advance(60 * MINUTE);
+  assert.equal(app.phase, 'ready');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(app.data.pause, null);
+  assert.ok(remote.reads('activities') - before >= 60, 'the activities are read every minute');
+  assert.equal(gladys.fake.lastState(act(TV, 'state')), 1);
+  assert.equal(app.data.remote.id, SERIAL, 'the saved identity is kept');
+  assert.equal(remote.reads('system'), 2, 'asked once at start, then not before 6 h');
+  assert.equal(logs.filter((l) => l.includes('identity')).length, 1, 'logged once');
+  const start = await press(gladys, first.device, act(MUSIC, 'on'));
+  assert.equal(start.success, true, start.error);
+
+  // Without any saved identity, the same 500 still pauses (no device without it).
+  const fresh = fakeRemote();
+  fresh.statuses.set('system', 500);
+  const other = await setup(t, { remote: fresh });
+  assert.equal(other.app.phase, 'paused');
+});
+
 test('a new key or "Reconnect" while a reading is in flight: the new client reads on', async (t) => {
   const remote = fakeRemote();
   const inner = remote.fetch;

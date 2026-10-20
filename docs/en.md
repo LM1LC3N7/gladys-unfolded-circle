@@ -107,8 +107,11 @@ battery and the power mode are only asked once it answered.
   hours (5 minutes by default for a 5xx, 15 minutes for a 429), kept across
   restarts. During the pause nothing is read and "Start" is refused; "Stop"
   still goes (one try). A 5xx of the activity list starts the pause; a 5xx of
-  the battery, the power mode or the identity only leaves those values out,
-  the activities are still followed. A 429 always starts the pause.
+  the battery, the power mode or the identity of a remote already known (at a
+  restart, a new key or "Reconnect" too) only leaves those values out: the
+  saved identity is kept and asked again 6 hours later, the activities are
+  still followed. Only the very first identity reading, without which there
+  is no device, pauses on a 5xx. A 429 always starts the pause.
 - **Certificate refused**: an `https://` address with a self-signed
   certificate is refused; the status says so and nothing is sent. Type the
   address without `https://` (the local API is plain HTTP).

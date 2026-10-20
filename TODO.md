@@ -129,6 +129,11 @@ up to date at the end of every milestone.
   refused key or a 429 is decisive; a 5xx only leaves its values out (the
   identity is then kept and asked again in 6 h). A 5xx of the activities, or
   of the identity at the first reading, still pauses.
+- I1 (review 2): with a remote already known in `/data`, the identity
+  reading of a new client (restart, new key, "Reconnect") is a refresh too:
+  only a stale client, 401/403, 429, TLS or no answer stop the reading; a 5xx
+  keeps the saved identity (logged once) and asks again in 6 h. Only the very
+  first identity reading (nothing saved) pauses on a 5xx.
 - I2: a failed command acks at once; the pause and the status go in the
   background.
 - I2b: a 401/403 of a command does not block: it asks for a reading, which
