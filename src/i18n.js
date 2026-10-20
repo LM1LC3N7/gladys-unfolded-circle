@@ -33,6 +33,11 @@ export const T = {
       `The remote asked to slow down (429) or is busy (5xx): paused until ${clock(until)}.`,
       `La télécommande demande de ralentir (429) ou est occupée (5xx) : en pause jusqu'à ${clock(until)}.`,
     ),
+  tls: (error) =>
+    both(
+      `The certificate of the remote was refused (${error}). Type its address without https:// (the local API is plain HTTP).`,
+      `Le certificat de la télécommande a été refusé (${error}). Saisissez son adresse sans https:// (l'API locale est en HTTP simple).`,
+    ),
   connecting: both('Connecting to the remote…', 'Connexion à la télécommande…'),
   asleep: (wait) =>
     both(
@@ -72,7 +77,9 @@ export const E = {
   unreachable: 'The remote is unreachable (asleep, or off the network): nothing sent',
   unconfirmed:
     'Command sent, without confirmation: the remote did not answer in time (it may be asleep)',
-  refusedKey: 'The remote refused the API key: command not done',
+  refusedCommand: (status) =>
+    `Refused by the remote (${status}): command not done; the API key is checked by a reading`,
+  tls: 'The certificate of the remote was refused (https://): nothing sent; use its http:// address',
   rateLimited: 'The remote asked to slow down (429): command not done',
   failed: (status) => `The remote answered ${status}: command not done`,
 };

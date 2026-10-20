@@ -16,6 +16,13 @@ export const KINDS = Object.freeze({
    * confirmation".
    */
   NO_ANSWER: 'no_answer',
+  /**
+   * The TLS handshake failed (a self-signed or wrong certificate on an
+   * https:// address): no request went out.
+   */
+  TLS: 'tls',
+  /** A reading of a previous client (new key, new address, "Reconnect"): dropped. */
+  STALE: 'stale',
   /** 5xx. */
   UNAVAILABLE: 'unavailable',
   /** 429, with `retryAfterMs` when the answer said it. */

@@ -30,8 +30,12 @@ import { FileStore, emptyData, newSalt } from './store.js';
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const short = (value) => String(value).slice(0, 48);
-/** Errors that come from the remote's own answer and stop or pause everything. */
-const DECISIVE = new Set([KINDS.REFUSED, KINDS.RATE_LIMITED, KINDS.UNAVAILABLE]);
+/**
+ * Errors of a secondary path (battery, power mode, identity refresh) that
+ * still stop or pause everything: a refused key, a 429. A 5xx there only
+ * leaves its values out.
+ */
+const SECONDARY_DECISIVE = new Set([KINDS.REFUSED, KINDS.RATE_LIMITED]);
 const NO_ANSWER_KINDS = new Set([KINDS.UNREACHABLE, KINDS.NO_ANSWER]);
 
 export class RemoteApp {
@@ -273,15 +277,39 @@ export class RemoteApp {
     await this.poll();
   }
 
-  /** One reading, then the next one scheduled (never sooner than the interval). */
-  async poll() {
-    if (this.polling) {
-      return this.polling;
+  /**
+   * One reading, then the next one scheduled (never sooner than the interval).
+   * A reading in flight is shared only within the same client (generation): a
+   * new key or "Reconnect" never waits on, nor is dropped by, the old one.
+   * `again`: a reading asked after a command while one is in flight runs once
+   * more after it (never lost).
+   */
+  async poll({ again = false } = {}) {
+    const current = this.polling;
+    if (current && current.generation === this.generation) {
+      if (again) {
+        current.again = true;
+      }
+      return current.promise;
     }
-    this.polling = this.pollOnce().finally(() => {
-      this.polling = undefined;
+    const entry = { generation: this.generation, again: false };
+    entry.promise = this.pollOnce().finally(() => {
+      if (this.polling === entry) {
+        this.polling = undefined;
+      }
+      if (entry.again && entry.generation === this.generation) {
+        this.recheck();
+      }
     });
-    return this.polling;
+    this.polling = entry;
+    return entry.promise;
+  }
+
+  /** Throws when the client changed meanwhile: nothing of an old reading is kept. */
+  alive(generation) {
+    if (generation !== this.generation) {
+      throw new RemoteError(KINDS.STALE, 'Reading of a previous client');
+    }
   }
 
   async pollOnce() {
@@ -312,7 +340,7 @@ export class RemoteApp {
     }
     let next = this.config.pollMs;
     try {
-      await this.read();
+      await this.read(generation);
       if (generation !== this.generation) {
         return;
       }
@@ -352,6 +380,14 @@ export class RemoteApp {
       this.phase = 'paused';
       return Math.max(interval, paused - this.now());
     }
+    if (err?.kind === KINDS.TLS) {
+      if (this.phase !== 'tls') {
+        this.logger.warn(`${err.message}: use the http:// address of the remote`);
+      }
+      this.phase = 'tls';
+      this.lastError = short(err.message);
+      return interval;
+    }
     if (NO_ANSWER_KINDS.has(err?.kind)) {
       if (this.phase !== 'asleep') {
         this.logger.info(`The remote does not answer: ${err.message}`);
@@ -376,34 +412,49 @@ export class RemoteApp {
    * leaves their values out, unless the remote refused the key or asked to
    * slow down).
    */
-  async read() {
+  async read(generation = this.generation) {
     const api = this.api;
     if (!this.data.remote || this.identityAt === undefined) {
-      await this.readIdentity(api);
+      await this.readIdentity(api, generation);
     } else if (this.now() - this.identityAt >= this.timings.infoRefresh) {
-      await this.readIdentity(api).catch((err) => {
-        if (DECISIVE.has(err?.kind) || NO_ANSWER_KINDS.has(err?.kind)) {
+      await this.readIdentity(api, generation).catch((err) => {
+        if (
+          err?.kind === KINDS.STALE ||
+          SECONDARY_DECISIVE.has(err?.kind) ||
+          NO_ANSWER_KINDS.has(err?.kind)
+        ) {
           throw err;
         }
+        // A 5xx or an odd answer of the identity refresh: kept as it was, tried in 6 h.
+        this.identityAt = this.now();
         this.logger.warn(`Could not read the identity of the remote: ${err.message}`);
       });
     }
-    const [activities, battery, power] = await Promise.allSettled([
-      api.activities(),
-      api.battery(),
-      api.power(),
-    ]);
-    const results = [activities, battery, power];
-    const decisive = results.find((r) => r.status === 'rejected' && DECISIVE.has(r.reason?.kind));
+    // The activities first: a remote asleep costs one request per reading.
+    const raw = await api.activities();
+    this.alive(generation);
+    const list = parseActivities(raw, this.config.language);
+    if (!list) {
+      throw new RemoteError(KINDS.BAD_RESPONSE, 'The activity list is not a list');
+    }
+    const [battery, power] = await Promise.allSettled([api.battery(), api.power()]);
+    this.alive(generation);
+    // A secondary path only stops everything for a refused key or a 429;
+    // any other failure (a 5xx included) only leaves its values out.
+    const decisive = [battery, power].find(
+      (r) => r.status === 'rejected' && SECONDARY_DECISIVE.has(r.reason?.kind),
+    );
     if (decisive) {
       throw decisive.reason;
     }
-    if (activities.status === 'rejected') {
-      throw activities.reason;
+    if (battery.status === 'fulfilled' && power.status === 'fulfilled') {
+      this.secondaryError = undefined;
     }
-    const list = parseActivities(activities.value, this.config.language);
-    if (!list) {
-      throw new RemoteError(KINDS.BAD_RESPONSE, 'The activity list is not a list');
+    for (const r of [battery, power]) {
+      if (r.status === 'rejected' && this.secondaryError !== r.reason?.message) {
+        this.secondaryError = r.reason?.message;
+        this.logger.warn(`Secondary value not read: ${short(r.reason?.message)}`);
+      }
     }
     const batteryInfo = battery.status === 'fulfilled' ? parseBattery(battery.value) : undefined;
     this.view = {
@@ -422,9 +473,11 @@ export class RemoteApp {
    * the MAC address (`GET /api/pub/version`). A remote already known by its
    * serial or its MAC keeps its id: the external id never changes.
    */
-  async readIdentity(api) {
+  async readIdentity(api, generation = this.generation) {
     const version = parseVersion(await api.version()) ?? {};
+    this.alive(generation);
     const system = parseSystem(await api.system()) ?? {};
+    this.alive(generation);
     const stored = this.data.remote;
     const same =
       stored &&
@@ -571,7 +624,14 @@ export class RemoteApp {
     if (target?.kind !== 'activity' || target.suffix === ACTIVITY_FEATURES.STATE) {
       throw new Error(E.notCommand(short(key)));
     }
-    const activity = this.data.activities[target.activityId];
+    // A stop is tried for any activity of the created device, even one /data
+    // does not list (a fresh volume, a remote asleep at start); a start needs
+    // an activity the remote listed.
+    const activity =
+      this.data.activities[target.activityId] ??
+      (target.suffix === ACTIVITY_FEATURES.OFF
+        ? { id: target.activityId, name: target.activityId }
+        : undefined);
     if (!activity) {
       throw new Error(E.unknownActivity);
     }
@@ -598,7 +658,9 @@ export class RemoteApp {
     if (!this.config.ready || !this.api) {
       throw new Error(E.notConfigured);
     }
-    if (this.blocked) {
+    // A stop is protective: tried once even while the key is held as refused
+    // (its own 401 changes nothing to the wait) or during a pause.
+    if (on && this.blocked) {
       throw new Error(E.blocked);
     }
     if (on && this.pausedUntil()) {
@@ -612,33 +674,38 @@ export class RemoteApp {
     try {
       await this.api.activityCommand(activity.id, on, { timeoutMs: budget, protective: !on });
     } catch (err) {
-      throw await this.commandError(err);
+      throw this.commandError(err);
     }
     this.recheck();
     return undefined;
   }
 
-  /** The error a failed command acks with (and what it changes). */
-  async commandError(err) {
+  /**
+   * The error a failed command acks with, at once: what it changes (a pause,
+   * the status) runs in the background, the ack never waits for Gladys nor
+   * for /data. A 401/403 of one command does not stop the integration: a
+   * reading checks the key, and only a refused reading holds it as refused.
+   */
+  commandError(err) {
     switch (err?.kind) {
       case KINDS.UNREACHABLE:
         return new RemoteError(err.kind, E.unreachable);
+      case KINDS.TLS:
+        return new RemoteError(err.kind, E.tls);
       case KINDS.NO_ANSWER:
         this.recheck();
         return new RemoteError(err.kind, E.unconfirmed);
       case KINDS.REFUSED:
-        await this.block();
-        this.setNamed('poll', this.data.block.nextAt - this.now(), () => this.poll());
-        await this.updateStatus();
-        return new RemoteError(err.kind, E.refusedKey);
+        this.recheck();
+        return new RemoteError(err.kind, E.refusedCommand(err.status));
       case KINDS.RATE_LIMITED:
         this.pause(err);
-        await this.updateStatus();
+        this.background(() => this.updateStatus());
         return new RemoteError(err.kind, E.rateLimited);
       case KINDS.UNAVAILABLE:
         if (err.status === 503) {
           this.pause(err);
-          await this.updateStatus();
+          this.background(() => this.updateStatus());
         }
         return new RemoteError(err.kind, E.failed(err.status));
       case KINDS.HTTP:
@@ -650,12 +717,27 @@ export class RemoteApp {
     }
   }
 
-  /** The activities are read again shortly after a command (one reading, not during a pause). */
+  /** A task that never holds the caller (its failure is logged). */
+  background(task) {
+    Promise.resolve()
+      .then(task)
+      .catch((err) => this.logger.warn(`Background task failed: ${err.message}`));
+  }
+
+  /**
+   * One reading shortly after a command, not during a pause nor a refusal.
+   * Grouped: one waiting at most, and at most one every `recheckSpacing`; a
+   * reading in flight meanwhile is followed by one more (never lost).
+   */
   recheck() {
-    if (this.pausedUntil() || this.blocked) {
+    if (this.pausedUntil() || this.blocked || this.named.has('recheck')) {
       return;
     }
-    this.setNamed('poll', this.timings.recheckDelay, () => this.poll());
+    const spaced = (this.lastRecheckAt ?? -Infinity) + this.timings.recheckSpacing - this.now();
+    this.setNamed('recheck', Math.max(this.timings.recheckDelay, spaced), () => {
+      this.lastRecheckAt = this.now();
+      return this.poll({ again: true });
+    });
   }
 
   // --- Configuration button --------------------------------------------------------
@@ -708,6 +790,8 @@ export class RemoteApp {
         return { connected: false, message: join(T.paused(this.pausedUntil() || this.now())) };
       case 'asleep':
         return { connected: false, message: join(T.asleep(nextIn())) };
+      case 'tls':
+        return { connected: false, message: join(T.tls(this.lastError)) };
       case 'failing':
         return { connected: false, message: join(T.failing(this.lastError, nextIn())) };
       case 'ready':

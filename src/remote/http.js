@@ -20,6 +20,17 @@ const UNREACHABLE_CODES = new Set([
   'UND_ERR_CONNECT_TIMEOUT',
 ]);
 
+/**
+ * A certificate or TLS handshake failure (`DEPTH_ZERO_SELF_SIGNED_CERT`,
+ * `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `CERT_HAS_EXPIRED`, `ERR_TLS_CERT_ALTNAME_INVALID`,
+ * `ERR_SSL_…`): the remote was reached but no request went out.
+ */
+export const isTlsCode = (code) =>
+  typeof code === 'string' &&
+  (/CERT|SELF_SIGNED|^ERR_TLS_|^ERR_SSL_/.test(code) ||
+    code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+    code === 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY');
+
 /** Parses a Retry-After header (seconds or HTTP date) into milliseconds. */
 export function retryAfterMs(value, now = Date.now()) {
   if (value === null || value === undefined || value === '') {
@@ -96,6 +107,9 @@ export async function httpRequest(
       throw new RemoteError(KINDS.NO_ANSWER, `No answer within ${timeoutMs} ms`);
     }
     const code = failureCode(err);
+    if (isTlsCode(code)) {
+      throw new RemoteError(KINDS.TLS, `TLS certificate refused (${code})`);
+    }
     if (UNREACHABLE_CODES.has(code)) {
       throw new RemoteError(KINDS.UNREACHABLE, `Remote unreachable (${code})`);
     }

@@ -258,9 +258,9 @@ test('429: paused (Retry-After bounded), kept in /data; a stop still goes, a sta
   assert.equal(gladys.fake.connectionStatus.connected, true);
 });
 
-test('5xx: a pause of 5 minutes at least, never a fast loop', async (t) => {
+test('5xx of the activities: a pause of 5 minutes at least, never a fast loop', async (t) => {
   const { gladys, remote, clock } = await created(t);
-  remote.statuses.set('system/power/battery', 500);
+  remote.statuses.set('activities', 500);
   await clock.advance(MINUTE);
   assert.match(gladys.fake.connectionStatus.message.en, /busy \(5xx\)/);
   const reads = remote.requests.length;
@@ -269,6 +269,195 @@ test('5xx: a pause of 5 minutes at least, never a fast loop', async (t) => {
   remote.statuses.clear();
   await clock.advance(1);
   assert.equal(gladys.fake.connectionStatus.connected, true);
+});
+
+test('5xx of a secondary path: only its values left out, no pause', async (t) => {
+  const { gladys, remote, clock, device, app } = await created(t);
+  remote.statuses.set('system/power/battery', 500);
+  remote.statuses.set('system', 503);
+  remote.activities[0].attributes.state = 'ON';
+  await clock.advance(7 * 3_600_000);
+  assert.equal(app.phase, 'ready');
+  assert.equal(gladys.fake.connectionStatus.connected, true);
+  assert.equal(app.data.pause, null);
+  assert.equal(gladys.fake.lastState(act(TV, 'state')), 1, 'the main data still follows');
+  assert.equal(gladys.fake.lastState(id('power_mode')), 'Normal');
+  const start = await press(gladys, device, act(MUSIC, 'on'));
+  assert.equal(start.success, true, start.error);
+  // A 429 there still pauses.
+  remote.statuses.set('system/power', 429);
+  await clock.advance(MINUTE);
+  assert.equal(app.phase, 'paused');
+});
+
+test('a new key or "Reconnect" while a reading is in flight: the new client reads on', async (t) => {
+  const remote = fakeRemote();
+  const inner = remote.fetch;
+  let gate;
+  remote.fetch = async (url, init) => {
+    if (gate && new URL(url).pathname.endsWith('/activities')) {
+      await gate;
+    }
+    return inner(url, init);
+  };
+  const hold = () => {
+    let release;
+    gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return () => {
+      gate = undefined;
+      release();
+    };
+  };
+  const { gladys, app, clock } = await created(t, { remote });
+  let release = hold();
+  await clock.advance(MINUTE);
+  assert.ok(app.polling, 'a reading is in flight');
+  remote.key = 'new-key';
+  const saved = gladys.fake.configUpdated({ ...CONFIG, api_key: 'new-key' });
+  await clock.settle();
+  release();
+  await saved;
+  await clock.advance(5 * MINUTE);
+  const withNewKey = remote.requests.filter((r) => r.headers.authorization === 'Bearer new-key');
+  assert.ok(withNewKey.length >= 5 * 3, `new key used: ${withNewKey.length}`);
+  assert.ok(clock.due().length >= 1, 'a reading stays scheduled');
+
+  release = hold();
+  await clock.advance(MINUTE);
+  const ack = gladys.fake.action('reconnect');
+  await clock.settle();
+  release();
+  await ack;
+  const before = remote.requests.length;
+  await clock.advance(3 * MINUTE);
+  assert.ok(remote.requests.length - before >= 9, 'readings go on after Reconnect');
+  assert.equal(app.phase, 'ready');
+});
+
+test('the ack of a refused command never waits for Gladys nor /data', async (t) => {
+  const { gladys, remote, device } = await created(t);
+  gladys.setConnectionStatus = () => new Promise(() => {});
+  remote.statuses.set(`entities/${TV}/command`, 429);
+  const ack = await Promise.race([
+    press(gladys, device, act(TV, 'on')),
+    new Promise((resolve) => setTimeout(() => resolve('held'), 300)),
+  ]);
+  assert.notEqual(ack, 'held');
+  assert.match(ack.error, /slow down/);
+  remote.statuses.clear();
+  remote.key = 'revoked';
+  const refused = await Promise.race([
+    press(gladys, device, act(MUSIC, 'off')),
+    new Promise((resolve) => setTimeout(() => resolve('held'), 300)),
+  ]);
+  assert.notEqual(refused, 'held');
+});
+
+test('a 403 on one command does not stop the integration; a stop is tried even when blocked', async (t) => {
+  const { gladys, remote, clock, device, app, store } = await created(t);
+  remote.statuses.set(`entities/${TV}/command`, 403);
+  const ack = await press(gladys, device, act(TV, 'on'));
+  assert.match(ack.error, /Refused by the remote \(403\)/);
+  await clock.advance(TIMINGS.recheckDelay);
+  assert.equal(app.phase, 'ready', 'the key is fine: a reading said so');
+  assert.equal(store.data.block, null);
+
+  // The key really refused: the reading blocks; a stop is still tried once.
+  remote.statuses.clear();
+  remote.key = 'revoked';
+  await clock.advance(MINUTE);
+  assert.equal(app.phase, 'blocked');
+  const nextAt = app.data.block.nextAt;
+  const sent = remote.requests.length;
+  const stop = await press(gladys, device, act(MUSIC, 'off'));
+  assert.equal(remote.requests.length, sent + 1, 'the stop went out');
+  assert.match(stop.error, /Refused by the remote \(401\)/);
+  assert.equal(app.data.block.nextAt, nextAt, 'the wait is not made longer');
+  const start = await press(gladys, device, act(TV, 'on'));
+  assert.match(start.error, /refused the API key: nothing sent/);
+  assert.equal(remote.requests.length, sent + 1);
+});
+
+test('a stop of an activity /data does not list is still sent', async (t) => {
+  const { gladys, remote, device, app } = await created(t);
+  app.data.activities = Object.create(null);
+  const stop = await press(gladys, device, act(MUSIC, 'off'));
+  assert.equal(stop.success, true, stop.error);
+  assert.deepEqual(remote.commands.at(-1), [MUSIC, 'activity.off']);
+  const start = await press(gladys, device, act(MUSIC, 'on'));
+  assert.match(start.error, /no longer on the remote/);
+});
+
+test('readings after commands are grouped, and one asked during a reading is not lost', async (t) => {
+  const { gladys, remote, clock, device } = await created(t);
+  const before = remote.reads('activities');
+  for (let i = 0; i < 20; i += 1) {
+    await press(gladys, device, act(TV, i % 2 ? 'off' : 'on'));
+    await clock.advance(2_500);
+  }
+  const reads = remote.reads('activities') - before;
+  assert.ok(reads <= 6, `readings in 50 s: ${reads}`);
+  assert.ok(reads >= 4);
+});
+
+test('a reading asked after a command while one is in flight runs after it', async (t) => {
+  const remote = fakeRemote();
+  const inner = remote.fetch;
+  let gate;
+  let release;
+  remote.fetch = async (url, init) => {
+    if (gate && new URL(url).pathname.endsWith('/activities')) {
+      await gate;
+    }
+    return inner(url, init);
+  };
+  const { gladys, clock, device } = await created(t, { remote });
+  gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await clock.advance(MINUTE);
+  const ack = await press(gladys, device, act(TV, 'on'));
+  assert.equal(ack.success, true, ack.error);
+  await clock.advance(TIMINGS.recheckDelay);
+  gate = undefined;
+  release();
+  await clock.settle();
+  const after = remote.reads('activities');
+  await clock.advance(TIMINGS.recheckSpacing);
+  assert.equal(remote.reads('activities'), after + 1, 'the reading asked meanwhile ran');
+  assert.equal(gladys.fake.lastState(act(TV, 'state')), 1);
+});
+
+test('a remote asleep costs one request per reading', async (t) => {
+  const { remote, clock } = await created(t);
+  remote.mode = 'asleep';
+  const n = remote.requests.length;
+  await clock.advance(10 * MINUTE);
+  assert.equal(remote.requests.length - n, 10);
+});
+
+test('an https address with a refused certificate: said in the status, nothing sent', async (t) => {
+  const remote = fakeRemote();
+  const inner = remote.fetch;
+  let tls = false;
+  remote.fetch = async (url, init) => {
+    if (tls) {
+      throw Object.assign(new TypeError('fetch failed'), {
+        cause: { code: 'DEPTH_ZERO_SELF_SIGNED_CERT' },
+      });
+    }
+    return inner(url, init);
+  };
+  const { gladys, clock, device, app } = await created(t, { remote });
+  tls = true;
+  await clock.advance(MINUTE);
+  assert.equal(app.phase, 'tls');
+  assert.match(gladys.fake.connectionStatus.message.en, /certificate of the remote was refused/);
+  assert.match(gladys.fake.connectionStatus.message.fr, /certificat/);
+  const ack = await press(gladys, device, act(TV, 'on'));
+  assert.match(ack.error, /certificate.*nothing sent/);
 });
 
 test('a refused key: stop kept in /data, spaced tries, new key or Reconnect try at once', async (t) => {

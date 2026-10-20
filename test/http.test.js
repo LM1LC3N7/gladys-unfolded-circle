@@ -42,6 +42,22 @@ test('network failures: unreachable (nothing sent) or no answer (maybe sent)', a
   );
 });
 
+test('a refused certificate is its own kind, not "no answer"', async () => {
+  for (const code of [
+    'DEPTH_ZERO_SELF_SIGNED_CERT',
+    'ERR_TLS_CERT_ALTNAME_INVALID',
+    'CERT_HAS_EXPIRED',
+  ]) {
+    await assert.rejects(
+      httpRequest('https://r/api/x', {}, async () => {
+        throw failure(code);
+      }),
+      (err) => err.kind === KINDS.TLS,
+      code,
+    );
+  }
+});
+
 test('answers are capped', async () => {
   await assert.rejects(
     httpRequest('http://r/api/x', { maxBytes: 10 }, async () => new Response('x'.repeat(11))),

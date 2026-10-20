@@ -72,6 +72,8 @@ export const TIMINGS = Object.freeze({
   commandBudget: 3_500,
   /** After a command, the activities are read again this much later (once). */
   recheckDelay: 2_000,
+  /** Those readings after commands are grouped: at most one every this. */
+  recheckSpacing: 10_000,
   /** The identity of the remote (model, serial, firmware) is read again after this. */
   infoRefresh: 6 * 3_600_000,
   /**

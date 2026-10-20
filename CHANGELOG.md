@@ -35,4 +35,23 @@ the notes of the version's GitHub Release.
 - `LICENSE` (Apache-2.0) and `THIRD_PARTY_NOTICES.md` (pyUnfoldedCircleRemote,
   MIT), copied into the image.
 
+### Fixed
+
+- A new API key, a new address or "Reconnect" during a reading no longer
+  leaves the integration without any reading: the new client reads at once,
+  and nothing of the old reading is kept.
+- A 5xx of the battery, the power mode or the identity no longer pauses
+  everything: only those values are left out, the activities are still
+  followed. A 5xx of the activity list still pauses.
+- The ack of a refused command no longer waits for the status publication nor
+  for `/data`.
+- A 401/403 of one command no longer stops the integration: a reading checks
+  the key. A stop is tried once even while the key is held as refused, without
+  making the wait longer, and even for an activity `/data` does not list.
+- Readings after commands are grouped (one every 10 s at most), and one asked
+  during a reading runs after it.
+- A remote asleep costs one request per reading (the battery and the power
+  mode are only asked once the activities answered).
+- A refused HTTPS certificate is said in the status instead of "asleep".
+
 [Unreleased]: https://github.com/LM1LC3N7/gladys-unfolded-circle/commits/main

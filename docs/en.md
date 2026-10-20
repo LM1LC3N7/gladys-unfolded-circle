@@ -74,25 +74,44 @@ button pressed while it sleeps answers that the remote is unreachable:
 nothing is sent. The integration does not wake the remote up (no Wake-on-LAN
 in this version).
 
+While it sleeps, each reading costs one request (the activity list): the
+battery and the power mode are only asked once it answered.
+
+> **Question to testers**: tell us on the forum whether readings every 30
+> seconds keep the remote from sleeping or drain its battery faster. When in
+> doubt, keep 1 minute or more.
+
 ## Commands
 
 - "Start" is sent in the order of the presses, one command at a time.
 - "Stop" goes at once, without waiting for the queued starts, and cancels the
-  starts of the same activity still waiting.
+  starts of the same activity still waiting. It is always tried once, even
+  during a pause or while the key is held as refused, and even for an
+  activity the integration has not read yet.
 - Each command must go through within 3.5 seconds (Gladys waits 5 seconds).
   When the remote does not answer in time, Gladys shows "sent, without
   confirmation" and the state is read again two seconds later.
+- After commands, the readings are grouped: one every 10 seconds at most.
+- A command the remote refuses (401 or 403) does not stop the integration: a
+  reading checks the key at once, and only a refused reading holds it as
+  refused.
 
 ## Status and errors
 
 - **Key refused** (revoked, or another remote at this address): the
   integration stops and only tries again by itself after 1 hour, then 6
   hours, then every 24 hours. This stop is kept across restarts. Paste a new
-  key (tried at once) or click **Reconnect** (one try).
+  key (tried at once, even while a reading was under way) or click
+  **Reconnect** (one try).
 - **Too many requests (429) or remote busy (5xx)**: a pause of 1 minute to 6
   hours (5 minutes by default for a 5xx, 15 minutes for a 429), kept across
   restarts. During the pause nothing is read and "Start" is refused; "Stop"
-  still goes (one try).
+  still goes (one try). A 5xx of the activity list starts the pause; a 5xx of
+  the battery, the power mode or the identity only leaves those values out,
+  the activities are still followed. A 429 always starts the pause.
+- **Certificate refused**: an `https://` address with a self-signed
+  certificate is refused; the status says so and nothing is sent. Type the
+  address without `https://` (the local API is plain HTTP).
 - **No answer**: see "Sleep".
 
 ## Privacy

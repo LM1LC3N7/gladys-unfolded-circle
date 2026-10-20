@@ -78,26 +78,47 @@ prise en main, le socle). Un bouton pressé pendant la veille répond que la
 télécommande est injoignable : rien n'est envoyé. L'intégration ne réveille
 pas la télécommande (pas de Wake-on-LAN dans cette version).
 
+Pendant la veille, chaque lecture ne coûte qu'une requête (la liste des
+activités) : la batterie et le mode ne sont demandés que si elle a répondu.
+
+> **Question aux testeurs** : dites-nous sur le forum si des lectures toutes
+> les 30 secondes empêchent la télécommande de se mettre en veille ou vident
+> sa batterie plus vite. En cas de doute, gardez 1 minute ou plus.
+
 ## Commandes
 
 - « Démarrer » est envoyé dans l'ordre des appuis, une commande à la fois.
 - « Arrêter » part tout de suite, sans attendre les démarrages en file, et
-  annule les démarrages de la même activité qui attendaient encore.
+  annule les démarrages de la même activité qui attendaient encore. Il est
+  toujours essayé une fois, même pendant une pause ou quand la clé est tenue
+  pour refusée, et même pour une activité que l'intégration n'a pas encore
+  relue.
 - Chaque commande doit aboutir en 3,5 secondes (Gladys attend 5 secondes).
   Si la télécommande ne répond pas à temps, Gladys affiche « envoyée, sans
   confirmation » et l'état est relu deux secondes plus tard.
+- Après des commandes, les relectures sont regroupées : une au plus toutes
+  les 10 secondes.
+- Une commande refusée par la télécommande (401 ou 403) n'arrête pas
+  l'intégration : une lecture vérifie aussitôt la clé, et seule une lecture
+  refusée la tient pour refusée.
 
 ## Statut et erreurs
 
 - **Clé refusée** (révoquée, ou une autre télécommande à cette adresse) :
   l'intégration s'arrête et ne réessaie toute seule qu'après 1 heure, puis
   6 heures, puis toutes les 24 heures. Cet arrêt est gardé après un
-  redémarrage. Collez une nouvelle clé (essayée aussitôt) ou cliquez sur
-  **Se reconnecter** (un seul essai).
+  redémarrage. Collez une nouvelle clé (essayée aussitôt, même si une
+  lecture était en cours) ou cliquez sur **Se reconnecter** (un seul essai).
 - **Trop de requêtes (429) ou télécommande occupée (5xx)** : une pause de
   1 minute à 6 heures (5 minutes par défaut pour un 5xx, 15 minutes pour un
   429), gardée après un redémarrage. Pendant la pause, rien n'est lu et
-  « Démarrer » est refusé ; « Arrêter » part quand même (un seul essai).
+  « Démarrer » est refusé ; « Arrêter » part quand même (un seul essai). Un
+  5xx de la liste des activités déclenche la pause ; un 5xx de la batterie,
+  du mode d'alimentation ou de l'identité laisse seulement ces valeurs de
+  côté, les activités restent suivies. Un 429 déclenche toujours la pause.
+- **Certificat refusé** : une adresse en `https://` avec un certificat
+  auto-signé est refusée ; le statut le dit et rien n'est envoyé. Saisissez
+  l'adresse sans `https://` (l'API locale est en HTTP simple).
 - **Pas de réponse** : voir « Veille ».
 
 ## Confidentialité

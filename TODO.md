@@ -118,6 +118,35 @@ up to date at the end of every milestone.
 - Answers capped (1 MB for the activities, 64 KB otherwise), parsed once with
   `JSON.parse`, every field checked and copied, tables without prototype; 50
   activities at most; names cut at 64 characters.
+
+### Review fixes (2026-10-21, review 1)
+
+- B1: a reading in flight is shared only within the same client
+  (generation); `read()` checks the generation after every request and
+  writes nothing for an old client. A new key, address or "Reconnect" during
+  a reading starts its own reading at once.
+- I1: on a secondary path (battery, power mode, identity refresh) only a
+  refused key or a 429 is decisive; a 5xx only leaves its values out (the
+  identity is then kept and asked again in 6 h). A 5xx of the activities, or
+  of the identity at the first reading, still pauses.
+- I2: a failed command acks at once; the pause and the status go in the
+  background.
+- I2b: a 401/403 of a command does not block: it asks for a reading, which
+  blocks only if the key is really refused (message "refused by the
+  remote"). A stop is tried once even while blocked; its 401 does not make the
+  wait longer.
+- M1/M4: readings after commands use their own timer (`recheck`), one
+  waiting at most, spaced 10 s; one asked during a reading in flight runs
+  after it.
+- M2: the activities are read first; battery and power mode only when they
+  answered (a remote asleep: one request per reading). Battery question put
+  to testers in the docs.
+- M3: a stop is accepted for any safe activity id of the created device, even
+  one `/data` does not list; a start still needs a listed activity.
+- M5: TLS and certificate codes (`*CERT*`, `ERR_TLS_*`, `ERR_SSL_*`) are their
+  own kind: status "certificate refused, use http://", commands "nothing
+  sent".
+
 - Version 0.1.0 in `package.json`, `package-lock.json`, the manifest and the
   `docker_image` tag, set by hand at milestone 1: the one exception to
   "versions belong to the Release workflow", because the template's 1.0.0 and
