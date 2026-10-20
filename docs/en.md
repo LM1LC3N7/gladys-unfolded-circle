@@ -1,61 +1,109 @@
-# Demo Devices Template
+# Unfolded Circle Remote for Gladys
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+This integration brings an **Unfolded Circle Remote Two** or **Remote 3** into
+Gladys, through the local API of the remote (the REST Core API documented by
+Unfolded Circle): no cloud, everything stays on your network.
 
-## What you get
+> **Warning: never tested with a real device.** This integration has never
+> been tested with a real device: it was written from the
+> pyUnfoldedCircleRemote library and tested with simulated answers only. Your
+> feedback is welcome on the Gladys forum.
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+Unofficial, not affiliated with Unfolded Circle.
+
+## What the remote shows
+
+| Feature             | Type      | Values                                              |
+| ------------------- | --------- | --------------------------------------------------- |
+| Battery             | read only | charge level, %                                     |
+| Charging            | read only | 1 on its dock or cable, 0 otherwise                 |
+| Reachable           | read only | 1 the remote answered the last reading, 0 otherwise |
+| Power mode          | text      | Normal, Idle, Low power, Asleep                     |
+| Current activity    | text      | names of the activities running, "—" when none      |
+| _activity_: running | read only | 1 the activity runs, 0 stopped (one per activity)   |
+| Start _activity_    | button    | starts the activity (`activity.on`)                 |
+| Stop _activity_     | button    | stops the activity (`activity.off`)                 |
+
+Start and stop are **buttons**, not a switch: an "everything off" of a voice
+assistant or a scene cannot trigger them. The state of each activity can
+trigger a scene.
+
+The activities are the ones you created on the remote (50 at most). An
+activity added on the remote shows up in the **Discovery** tab at the next
+reading; a deleted activity keeps its features in Gladys (its history is not
+lost), but its buttons answer that it no longer exists.
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+1. **Address of the remote**: its IP address or host name on your network
+   (settings of the remote, Wi-Fi). Better give it a fixed address in your
+   router. A port may follow (`192.168.1.20:8080`).
+2. **API key**: see below.
+3. **Reading interval**: 30 seconds to 5 minutes (1 minute by default).
+4. Save. The remote shows up in the **Discovery** tab: add it.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+The key is kept by Gladys in its database, never shown again, and sent only
+to your remote, in the `Authorization` header of each request. The local API
+of the remote is plain HTTP: the key travels in clear on your local network,
+as for the web configurator of the remote.
 
-## Actions
+### Create an API key
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+The key is created with the PIN of the web configurator of the remote (shown
+on the remote in the profile settings, web configurator section). From a
+computer on the same network:
 
-## Scenes
+```bash
+curl -u web-configurator:<PIN> -X POST http://<address>/api/auth/api_keys \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Gladys", "scopes": ["admin"]}'
+```
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+The answer holds `api_key`: copy its value into the **API key** field. It is
+shown only once. The integration never asks for the PIN. To revoke the key
+later: `GET /api/auth/api_keys` (with the PIN) then
+`DELETE /api/auth/api_keys/<key_id>`.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+## Sleep
 
-## Dashboard
+To save its battery, the remote goes to sleep and turns its Wi-Fi off: it no
+longer answers. "Reachable" goes to 0, the other values keep their last
+reading, and the integration tries again at each interval (never faster). The
+values come back as soon as it wakes up (a press, a pick-up, the dock). A
+button pressed while it sleeps answers that the remote is unreachable:
+nothing is sent. The integration does not wake the remote up (no Wake-on-LAN
+in this version).
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+## Commands
 
-## Troubleshooting
+- "Start" is sent in the order of the presses, one command at a time.
+- "Stop" goes at once, without waiting for the queued starts, and cancels the
+  starts of the same activity still waiting.
+- Each command must go through within 3.5 seconds (Gladys waits 5 seconds).
+  When the remote does not answer in time, Gladys shows "sent, without
+  confirmation" and the state is read again two seconds later.
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+## Status and errors
+
+- **Key refused** (revoked, or another remote at this address): the
+  integration stops and only tries again by itself after 1 hour, then 6
+  hours, then every 24 hours. This stop is kept across restarts. Paste a new
+  key (tried at once) or click **Reconnect** (one try).
+- **Too many requests (429) or remote busy (5xx)**: a pause of 1 minute to 6
+  hours (5 minutes by default for a 5xx, 15 minutes for a 429), kept across
+  restarts. During the pause nothing is read and "Start" is refused; "Stop"
+  still goes (one try).
+- **No answer**: see "Sleep".
+
+## Privacy
+
+The integration only talks to your remote, on your network. It reads
+`/api/pub/version` (without the key), `/api/system`, `/api/system/power`,
+`/api/system/power/battery` and `/api/activities`, and sends the activity
+commands to `/api/entities/<activity>/command`. Nothing goes to the Internet.
+
+## Credits
+
+JavaScript port of
+[pyUnfoldedCircleRemote](https://github.com/jackjpowell/py-unfolded-circle)
+(MIT), the library of the Home Assistant integration by Jack Powell.

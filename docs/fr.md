@@ -1,67 +1,114 @@
-# Template de démonstration
+# Unfolded Circle Remote pour Gladys
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Cette intégration amène dans Gladys une télécommande **Unfolded Circle Remote
+Two** ou **Remote 3**, par l'API locale de la télécommande (Core API REST,
+documentée par Unfolded Circle) : sans cloud, tout reste sur votre réseau.
 
-## Ce que vous obtenez
+> **Attention : jamais testé avec un vrai appareil.** Cette intégration n'a
+> jamais été testée avec un vrai appareil : elle a été écrite d'après la
+> bibliothèque pyUnfoldedCircleRemote et testée seulement avec des réponses
+> simulées. Vos retours sont les bienvenus sur le forum de Gladys.
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+Non officielle, sans lien avec Unfolded Circle.
+
+## Ce que montre la télécommande
+
+| Fonctionnalité        | Type          | Valeurs                                                    |
+| --------------------- | ------------- | ---------------------------------------------------------- |
+| Batterie              | lecture seule | niveau de charge, en %                                     |
+| En charge             | lecture seule | 1 sur son socle ou son câble, 0 sinon                      |
+| Joignable             | lecture seule | 1 la télécommande a répondu à la dernière lecture, 0 sinon |
+| Mode d'alimentation   | texte         | Normal, Inactive, Économie d’énergie, En veille            |
+| Activité en cours     | texte         | noms des activités en marche, « — » si aucune              |
+| _activité_ : en cours | lecture seule | 1 l'activité est en marche, 0 arrêtée (une par activité)   |
+| Démarrer _activité_   | bouton        | démarre l'activité (`activity.on`)                         |
+| Arrêter _activité_    | bouton        | arrête l'activité (`activity.off`)                         |
+
+Démarrer et arrêter sont des **boutons**, pas un interrupteur : un « tout
+éteindre » d'un assistant vocal ou d'une scène ne peut pas les déclencher.
+L'état de chaque activité peut servir de déclencheur de scène.
+
+Les activités sont celles que vous avez créées sur la télécommande (50 au
+plus). Une activité ajoutée sur la télécommande apparaît dans l'onglet
+**Découverte** à la lecture suivante ; une activité supprimée garde ses
+fonctionnalités dans Gladys (son historique n'est pas perdu), mais ses boutons
+répondent qu'elle n'existe plus.
 
 ## Configuration
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+1. **Adresse de la télécommande** : son adresse IP ou son nom sur votre
+   réseau (réglages de la télécommande, Wi-Fi). Donnez-lui de préférence une
+   adresse fixe dans votre box. Un port peut suivre (`192.168.1.20:8080`).
+2. **Clé API** : voir ci-dessous.
+3. **Intervalle de lecture** : 30 secondes à 5 minutes (1 minute par défaut).
+4. Enregistrez. La télécommande apparaît dans l'onglet **Découverte** :
+   ajoutez-la.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+La clé est gardée par Gladys dans sa base, jamais réaffichée, et envoyée
+seulement à votre télécommande, dans l'en-tête `Authorization` de chaque
+requête. L'API locale de la télécommande est en HTTP simple : la clé circule
+en clair sur votre réseau local, comme pour l'application web de la
+télécommande.
 
-## Actions
+### Créer une clé API
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+La clé se crée avec le code PIN du configurateur web de la télécommande
+(affiché sur la télécommande dans les réglages du profil, rubrique
+configurateur web). Depuis un ordinateur du même réseau :
 
-## Scènes
+```bash
+curl -u web-configurator:<PIN> -X POST http://<adresse>/api/auth/api_keys \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "Gladys", "scopes": ["admin"]}'
+```
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+La réponse contient `api_key` : copiez sa valeur dans le champ **Clé API**.
+Elle n'est montrée qu'une fois. Le PIN n'est jamais demandé par
+l'intégration. Pour révoquer la clé plus tard :
+`GET /api/auth/api_keys` (avec le PIN) puis
+`DELETE /api/auth/api_keys/<key_id>`.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Veille
 
-## Tableau de bord
+Pour économiser sa batterie, la télécommande se met en veille et coupe son
+Wi-Fi : elle ne répond plus. « Joignable » passe à 0, les autres valeurs
+gardent leur dernière lecture, et l'intégration réessaie à chaque intervalle
+(jamais plus vite). Les valeurs reviennent dès son réveil (un appui, une
+prise en main, le socle). Un bouton pressé pendant la veille répond que la
+télécommande est injoignable : rien n'est envoyé. L'intégration ne réveille
+pas la télécommande (pas de Wake-on-LAN dans cette version).
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+## Commandes
 
-## Dépannage
+- « Démarrer » est envoyé dans l'ordre des appuis, une commande à la fois.
+- « Arrêter » part tout de suite, sans attendre les démarrages en file, et
+  annule les démarrages de la même activité qui attendaient encore.
+- Chaque commande doit aboutir en 3,5 secondes (Gladys attend 5 secondes).
+  Si la télécommande ne répond pas à temps, Gladys affiche « envoyée, sans
+  confirmation » et l'état est relu deux secondes plus tard.
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+## Statut et erreurs
+
+- **Clé refusée** (révoquée, ou une autre télécommande à cette adresse) :
+  l'intégration s'arrête et ne réessaie toute seule qu'après 1 heure, puis
+  6 heures, puis toutes les 24 heures. Cet arrêt est gardé après un
+  redémarrage. Collez une nouvelle clé (essayée aussitôt) ou cliquez sur
+  **Se reconnecter** (un seul essai).
+- **Trop de requêtes (429) ou télécommande occupée (5xx)** : une pause de
+  1 minute à 6 heures (5 minutes par défaut pour un 5xx, 15 minutes pour un
+  429), gardée après un redémarrage. Pendant la pause, rien n'est lu et
+  « Démarrer » est refusé ; « Arrêter » part quand même (un seul essai).
+- **Pas de réponse** : voir « Veille ».
+
+## Confidentialité
+
+L'intégration parle seulement à votre télécommande, sur votre réseau. Elle lit
+`/api/pub/version` (sans clé), `/api/system`, `/api/system/power`,
+`/api/system/power/battery` et `/api/activities`, et envoie les commandes
+d'activité à `/api/entities/<activité>/command`. Rien ne part vers Internet.
+
+## Remerciements
+
+Port en JavaScript de
+[pyUnfoldedCircleRemote](https://github.com/jackjpowell/py-unfolded-circle)
+(MIT), la bibliothèque de l'intégration Home Assistant de Jack Powell.

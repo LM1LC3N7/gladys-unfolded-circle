@@ -1,45 +1,64 @@
 // -----------------------------------------------------------------------------
-// Integration configuration.
-//
-// The configuration is filled in by the user in Gladys, from the `config_schema`
-// declared in `gladys-assistant-integration.json`. The SDK fetches it for you
-// (`gladys.getConfig()`) and notifies you of every change through
-// `gladys.onConfigUpdated()`.
-//
-// This module only provides defaults and normalizes the received object, so the
-// rest of the code never has to deal with `undefined`.
+// The configuration: the manifest `config_schema` values, normalized so the
+// rest of the code never deals with strings typed in a form.
 // -----------------------------------------------------------------------------
 
-// Defaults: they MUST stay consistent with the `default` values declared in the
-// `config_schema` of the manifest.
+import { scryptSync } from 'node:crypto';
+import { POLL_INTERVALS } from './constants.js';
+import { parseBaseUrl } from './remote/parse.js';
+
+/** Defaults, mirrored by the manifest (checked by test/manifest.test.js). */
 export const DEFAULT_CONFIG = {
-  latitude: 48.8566, // Paris
-  longitude: 2.3522,
-  unit: 'celsius', // 'celsius' | 'fahrenheit'
-  // Seconds between two reads of the polled sensors. Gladys polls at most once
-  // a minute: slower intervals are applied by skipping polls (see
-  // createPoller in src/devices/index.js).
-  poll_frequency: 300,
-  // Reserved key (NOT in config_schema): because the manifest declares both
-  // 'local' and 'cloud' in its `transports` field, Gladys shows a standard
-  // "Prefer the local connection" toggle and sends the user's choice here.
-  // Read-only for the integration; defaults to true.
-  GLADYS_PREFER_LOCAL: true,
+  poll_interval: '60',
+  language: 'fr',
 };
 
-/**
- * Merge the user config with the defaults.
- * @param {Record<string, unknown>} raw config returned by the SDK
- */
-export function normalizeConfig(raw = {}) {
-  return {
+export function normalizeConfig(raw = {}, salt = undefined) {
+  const c = {
     ...DEFAULT_CONFIG,
-    ...raw,
-    // Force the types: config may arrive as strings from a form.
-    latitude: Number(raw.latitude ?? DEFAULT_CONFIG.latitude),
-    longitude: Number(raw.longitude ?? DEFAULT_CONFIG.longitude),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
-    // The preference is a boolean; anything but an explicit false means true.
-    GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
+    ...Object.fromEntries(Object.entries(raw ?? {}).filter(([, v]) => v != null)),
   };
+  const host = typeof c.host === 'string' ? c.host.trim() : '';
+  const baseUrl = parseBaseUrl(host);
+  // An API key is a printable token: anything else (a pasted line break, a
+  // huge value) is treated as missing rather than sent.
+  const key = typeof c.api_key === 'string' ? c.api_key.trim() : '';
+  const apiKey = /^[\x21-\x7e]{1,512}$/.test(key) ? key : '';
+  const interval = POLL_INTERVALS.includes(String(c.poll_interval))
+    ? String(c.poll_interval)
+    : DEFAULT_CONFIG.poll_interval;
+  return {
+    baseUrl,
+    /** A host was typed but is not a plain address (said in the status). */
+    invalidHost: host !== '' && baseUrl === undefined,
+    apiKey,
+    ready: baseUrl !== undefined && apiKey !== '',
+    pollMs: Number(interval) * 1000,
+    language: c.language === 'en' ? 'en' : 'fr',
+    /** Set once the salt of /data is known (`credentialDigest`). */
+    fingerprint: salt && baseUrl ? credentialDigest(baseUrl, apiKey, salt) : undefined,
+  };
+}
+
+let memo = { key: undefined, digest: undefined };
+
+/**
+ * A digest of the address and API key: a refusal is kept against it, so only
+ * a new key, a new address or the "Reconnect" button try again at once.
+ * scrypt with a random salt kept beside it in /data: the digest alone is
+ * written there, never the key, and it cannot be checked against guesses
+ * cheaply.
+ */
+export function credentialDigest(baseUrl, apiKey, salt) {
+  const key = JSON.stringify([baseUrl, apiKey]);
+  const cacheKey = `${salt}\n${key}`;
+  if (memo.key !== cacheKey) {
+    memo = {
+      key: cacheKey,
+      digest: scryptSync(key, Buffer.from(salt, 'hex'), 32, { N: 16384, r: 8, p: 1 }).toString(
+        'hex',
+      ),
+    };
+  }
+  return memo.digest;
 }
