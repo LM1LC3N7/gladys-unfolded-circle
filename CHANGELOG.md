@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-20
+
 ### Added
 
 - Unfolded Circle Remote Two and Remote 3, through the local Core API of the
@@ -56,4 +58,5 @@ the notes of the version's GitHub Release.
   mode are only asked once the activities answered).
 - A refused HTTPS certificate is said in the status instead of "asleep".
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-unfolded-circle/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-unfolded-circle/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-unfolded-circle/releases/tag/v0.1.1

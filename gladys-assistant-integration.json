@@ -6,8 +6,8 @@
     "en": "Unfolded Circle Remote Two and Remote 3: battery, activities and their buttons, on your network.",
     "fr": "Télécommandes Unfolded Circle Remote Two et 3 : batterie, activités et leurs boutons, en local."
   },
-  "version": "0.1.0",
-  "docker_image": "ghcr.io/lm1lc3n7/gladys-unfolded-circle:0.1.0",
+  "version": "0.1.1",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-unfolded-circle:0.1.1",
   "gladys_version": ">=5.1.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-unfolded-circle/main/cover.png",
   "categories": ["multimedia"],
