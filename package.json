@@ -1,6 +1,6 @@
 {
   "name": "gladys-unfolded-circle",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Gladys Assistant external integration for the Unfolded Circle Remote Two and Remote 3, through the local REST API of the remote (API key): battery, charging, power mode, activities and their start and stop buttons. Unofficial, not affiliated with Unfolded Circle.",
   "type": "module",
